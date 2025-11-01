@@ -2,19 +2,23 @@
 
 namespace App\Providers;
 
-use App\Repositories\UserRepository;
-use App\Repositories\OrderRepository;
-use App\Repositories\ProductRepository;
 use Illuminate\Support\ServiceProvider;
-use App\Repositories\OrderItemRepository;
-use App\Services\Inventory\InventoryManager;
-use App\Services\Payment\CheckoutPaymentGateway;
-use App\Services\Contracts\PaymentGatewayInterface;
-use App\Services\Contracts\InventoryManagerInterface;
+
+// Interfaces
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\OrderRepositoryInterface;
 use App\Repositories\Interfaces\ProductRepositoryInterface;
 use App\Repositories\Interfaces\OrderItemRepositoryInterface;
+use App\Services\Contracts\PaymentGatewayInterface;
+use App\Services\Contracts\InventoryManagerInterface;
+
+// Implementations
+use App\Repositories\UserRepository;
+use App\Repositories\OrderRepository;
+use App\Repositories\ProductRepository;
+use App\Repositories\OrderItemRepository;
+use App\Services\Payment\CheckoutPaymentGateway;
+use App\Services\Inventory\InventoryManager;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -23,12 +27,15 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // Repositories
+        $this->app->bind(UserRepositoryInterface::class, UserRepository::class);
         $this->app->bind(OrderRepositoryInterface::class, OrderRepository::class);
-        $this->app->bind(OrderItemRepositoryInterface::class, OrderItemRepository::class);
         $this->app->bind(ProductRepositoryInterface::class, ProductRepository::class);
+        $this->app->bind(OrderItemRepositoryInterface::class, OrderItemRepository::class);
+
+        // Services
         $this->app->bind(PaymentGatewayInterface::class, CheckoutPaymentGateway::class);
         $this->app->bind(InventoryManagerInterface::class, InventoryManager::class);
-        $this->app->bind(UserRepositoryInterface::class, UserRepository::class);
     }
 
     /**

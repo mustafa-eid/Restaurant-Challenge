@@ -1,15 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
+/**
+ * Class RevenueManager
+ *
+ * Utility class for revenue calculation. Stateless static methods.
+ */
 class RevenueManager
 {
     /**
-     * Calculate total revenue for all orders.
+     * Calculate total revenue for all order items.
      *
      * @return float
      */
@@ -19,36 +26,40 @@ class RevenueManager
     }
 
     /**
-     * Calculate total revenue for a specific date range.
+     * Calculate total revenue for a specific date range (inclusive).
      *
-     * @param string $from Start date (Y-m-d)
-     * @param string $to End date (Y-m-d)
+     * @param string $from Date string (Y-m-d)
+     * @param string $to Date string (Y-m-d)
      * @return float
      */
     public static function calculateRevenueByDateRange(string $from, string $to): float
     {
-        return (float) OrderItem::whereHas('order', function ($query) use ($from, $to) {
-            $query->whereBetween('created_at', [$from, $to]);
+        // Ensure dates are properly formed; Carbon will throw if invalid
+        $start = Carbon::parse($from)->startOfDay()->toDateTimeString();
+        $end = Carbon::parse($to)->endOfDay()->toDateTimeString();
+
+        return (float) OrderItem::whereHas('order', function ($query) use ($start, $end) {
+            $query->whereBetween('created_at', [$start, $end]);
         })->sum(DB::raw('quantity * price'));
     }
 
     /**
-     * Calculate daily revenue for today or a specific day.
+     * Calculate revenue for a specific day (default: today).
      *
-     * @param string|null $date (Y-m-d), default today
+     * @param string|null $date Y-m-d
      * @return float
      */
     public static function calculateDailyRevenue(?string $date = null): float
     {
-        $date = $date ?: Carbon::today()->toDateString();
+        $date = $date ?? Carbon::today()->toDateString();
 
         return static::calculateRevenueByDateRange($date, $date);
     }
 
     /**
-     * Calculate weekly revenue for the current week or a given start date.
+     * Calculate revenue for the week that contains the given start date or current week.
      *
-     * @param string|null $startOfWeek (Y-m-d), default start of current week
+     * @param string|null $startOfWeek Date Y-m-d or null for current week
      * @return float
      */
     public static function calculateWeeklyRevenue(?string $startOfWeek = null): float
@@ -60,9 +71,9 @@ class RevenueManager
     }
 
     /**
-     * Calculate monthly revenue for the current month or a given month.
+     * Calculate revenue for a month (format Y-m). Defaults to current month.
      *
-     * @param string|null $month (Y-m), default current month
+     * @param string|null $month e.g. "2025-11" or null for current month
      * @return float
      */
     public static function calculateMonthlyRevenue(?string $month = null): float

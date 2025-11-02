@@ -15,16 +15,33 @@ use Throwable;
 /**
  * Class OrderService
  *
- * Business logic for handling order placement and related side effects.
+ * Handles business logic related to order placement, including
+ * payment processing, inventory updates, and database transactions.
  *
- * Note: OrderService is responsible for DB transaction boundaries for the
- * complete order flow (payment + inventory + saving order).
+ * @package App\Services
  */
 class OrderService
 {
+    /**
+     * Payment gateway implementation.
+     *
+     * @var PaymentGatewayInterface
+     */
     private PaymentGatewayInterface $paymentGateway;
+
+    /**
+     * Inventory manager implementation.
+     *
+     * @var InventoryManagerInterface
+     */
     private InventoryManagerInterface $inventoryManager;
 
+    /**
+     * OrderService constructor.
+     *
+     * @param PaymentGatewayInterface $paymentGateway Payment gateway service for processing payments.
+     * @param InventoryManagerInterface $inventoryManager Inventory manager service for updating stock levels.
+     */
     public function __construct(
         PaymentGatewayInterface $paymentGateway,
         InventoryManagerInterface $inventoryManager
@@ -34,27 +51,34 @@ class OrderService
     }
 
     /**
-     * Place or update an order and perform side effects (payment, inventory).
+     * Place or update an order and execute side effects (payment, inventory updates).
      *
-     * @param Order $order
-     * @param bool $isUpdate If true, this is an update operation.
-     * @return bool True if processed successfully, false otherwise.
+     * This method encapsulates a full transactional flow:
+     *  - Calculates total order amount
+     *  - Processes payment (if applicable)
+     *  - Updates inventory quantities
+     *  - Persists the order in the database
      *
-     * @throws Throwable Re-throws unexpected exceptions after rolling back.
+     * @param Order $order The order model instance being processed.
+     * @param bool $isUpdate Indicates whether the order is being updated or newly created.
+     *
+     * @return bool True if the operation completes successfully; false if payment or inventory update fails.
+     *
+     * @throws Throwable Rethrows unexpected exceptions after rollback for higher-level handling.
      */
     public function placeOrder(Order $order, bool $isUpdate = false): bool
     {
         DB::beginTransaction();
 
         try {
-            // Calculate and set total amount
+            // Step 1: Calculate and assign total amount
             $total = $this->calculateOrderTotal($order);
             $order->total_amount = $total;
 
             $hasItems = $order->items && $order->items->isNotEmpty();
 
             if ($hasItems && $total > 0.0) {
-                // Process payment
+                // Step 2: Process payment
                 /** @var PaymentResult $paymentResult */
                 $paymentResult = $this->paymentGateway->processPayment($total);
 
@@ -69,7 +93,7 @@ class OrderService
                     return false;
                 }
 
-                // Prepare inventory payload
+                // Step 3: Update inventory
                 $inventoryItems = $order->items->map(fn($item): array => [
                     'product_id' => $item->product_id,
                     'quantity' => (int) $item->quantity,
@@ -90,7 +114,7 @@ class OrderService
                 ]);
             }
 
-            // Persist order (create/update)
+            // Step 4: Save order
             $order->save();
 
             DB::commit();
@@ -110,16 +134,18 @@ class OrderService
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            // Re-throw so higher layers can handle the exceptional path.
             throw $e;
         }
     }
 
     /**
-     * Calculate total amount for the given order.
+     * Calculate the total amount for the given order.
      *
-     * @param Order $order
-     * @return float
+     * Iterates through order items to compute total value based on
+     * each item's price and quantity.
+     *
+     * @param Order $order The order whose total amount should be calculated.
+     * @return float The calculated total amount, rounded to two decimal places.
      */
     private function calculateOrderTotal(Order $order): float
     {
@@ -127,9 +153,10 @@ class OrderService
             return 0.0;
         }
 
-        $total = (float) $order->items->sum(fn($item) => (float) $item->price * (int) $item->quantity);
+        $total = (float) $order->items->sum(
+            fn($item) => (float) $item->price * (int) $item->quantity
+        );
 
-        // Keep currency rounding consistent
         return round($total, 2);
     }
 }

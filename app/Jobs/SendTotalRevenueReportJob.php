@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Jobs;
 
 use App\Services\RevenueManager;
@@ -9,145 +11,164 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Class SendTotalRevenueReportJob
  *
- * This job is responsible for calculating total revenue (daily, weekly, monthly, or custom),
- * performing asynchronous external API calls to verify and submit a revenue report,
- * and dispatching a confirmation job once the report has been successfully submitted.
+ * This job is responsible for generating, caching, and sending total revenue reports
+ * to external APIs. It supports multiple report types (daily, weekly, monthly, custom)
+ * and ensures reliability through retries, exponential backoff, and queued confirmation.
  *
- * PERFORMANCE FEATURES:
- * - Uses Http::pool() for concurrent API calls (asynchronous)
- * - Implements caching to avoid duplicate calculations
- * - Includes retry logic with exponential backoff
- * - Dispatches chained confirmation job for modular workflow
+ * The job performs the following sequence:
+ * 1. Retrieves or calculates the total revenue (cached for efficiency).
+ * 2. Sends verification and reporting requests concurrently.
+ * 3. Dispatches a confirmation job upon success.
  *
- * RELIABILITY FEATURES:
- * - Full logging for debugging and audit trail
- * - Graceful exception handling and queue auto-retry
- * - Configurable retries, delays, and exception limits
+ * @package App\Jobs
  */
 class SendTotalRevenueReportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    /** @var int Maximum number of job attempts before failing */
+    /**
+     * The maximum number of attempts before the job is considered failed.
+     *
+     * @var int
+     */
     public int $tries = 10;
 
-    /** @var int Maximum number of exceptions allowed before job is marked as failed */
+    /**
+     * The maximum number of exceptions allowed before the job fails.
+     *
+     * @var int
+     */
     public int $maxExceptions = 3;
 
-    /** @var array Exponential backoff delays (in seconds) for retries */
-    public array $backoff = [60, 120, 300];
+    /**
+     * Exponential backoff intervals (in seconds) for retry attempts.
+     *
+     * @var array<int>
+     */
+    public array $backoff = [60, 120, 300, 600];
 
-    /** @var string The type of revenue report ('daily', 'weekly', 'monthly', 'custom') */
+    /**
+     * The report type (e.g. daily, weekly, monthly, custom).
+     *
+     * @var string
+     */
     protected string $type;
 
-    /** @var string|null The start date (used for 'custom' reports only) */
+    /**
+     * Optional start date for custom report ranges.
+     *
+     * @var string|null
+     */
     protected ?string $from;
 
-    /** @var string|null The end date (used for 'custom' reports only) */
+    /**
+     * Optional end date for custom report ranges.
+     *
+     * @var string|null
+     */
     protected ?string $to;
 
     /**
-     * Constructor.
+     * Create a new job instance.
      *
-     * @param string $type Report type (default: 'daily')
-     * @param string|null $from Optional start date for 'custom' type
-     * @param string|null $to Optional end date for 'custom' type
+     * @param string $type The type of report (default: daily).
+     * @param string|null $from Optional start date for custom reports.
+     * @param string|null $to Optional end date for custom reports.
      */
     public function __construct(string $type = 'daily', ?string $from = null, ?string $to = null)
     {
         $this->type = $type;
         $this->from = $from;
-        $this->to = $to;
+        $this->to   = $to;
     }
 
     /**
-     * Execute the job.
+     * Execute the main job logic.
      *
-     * Handles the entire workflow:
-     * 1. Calculates total revenue (with caching)
-     * 2. Sends verification and report API requests concurrently
-     * 3. Dispatches a follow-up job to confirm report submission
+     * This method coordinates revenue calculation, caching, verification,
+     * report submission, and confirmation dispatch.
      *
-     * @throws \Throwable If any HTTP request or revenue calculation fails
+     * @throws Throwable
      */
     public function handle(): void
     {
-        Log::info("Revenue Report Job Started", [
+        Log::info('[SendTotalRevenueReportJob] Started', [
             'type' => $this->type,
             'from' => $this->from,
-            'to' => $this->to,
+            'to'   => $this->to,
         ]);
 
         try {
-            /** STEP 1: Calculate total revenue and cache result for 10 minutes */
-            $totalRevenue = cache()->remember(
-                "revenue:{$this->type}:{$this->from}:{$this->to}",
-                now()->addMinutes(10),
-                fn() => $this->calculateRevenue()
-            );
+            /** Retrieve or compute total revenue, cached for 15 minutes. */
+            $cacheKey = "revenue:{$this->type}:{$this->from}:{$this->to}";
 
-            /** STEP 2: Perform asynchronous HTTP requests using Http::pool() */
+            $totalRevenue = Cache::remember($cacheKey, now()->addMinutes(15), function (): float {
+                return $this->calculateRevenue();
+            });
+
+            /** Define endpoints and send concurrent requests (verification + reporting). */
+            $verifyUrl = config('services.revenue.verify_url', 'https://revenue-verifier.com');
+            $reportUrl = config('services.revenue.report_url', 'https://revenue-reporting.com/reports');
+
             $responses = Http::pool(fn(Pool $pool) => [
-                // 2.1. Verification request
-                $pool->as('verify')->post('https://revenue-verifier.com'),
-
-                // 2.2. Report submission request
-                $pool->as('report')->post('https://revenue-reporting.com/reports', [
-                    'type' => $this->type,
-                    'from' => $this->from,
-                    'to' => $this->to,
+                $pool->as('verify')->timeout(8)->post($verifyUrl),
+                $pool->as('report')->timeout(8)->post($reportUrl, [
+                    'type'          => $this->type,
+                    'from'          => $this->from,
+                    'to'            => $this->to,
                     'total_revenue' => $totalRevenue,
                 ]),
             ]);
 
-            /** STEP 3: Extract JSON responses and validate results */
-            $verificationResponse = $responses['verify']->throw()->json();
-            $reportResponse = $responses['report']->throw()->json();
+            // Decode and validate both responses
+            $verify = $responses['verify']->throw()->json();
+            $report = $responses['report']->throw()->json();
 
-            Log::info("Revenue Report Submitted Successfully", [
-                'type' => $this->type,
-                'verification_id' => $verificationResponse['id'] ?? null,
-                'report_id' => $reportResponse['id'] ?? null,
+            /** Log successful submission and queue confirmation job. */
+            Log::info('[SendTotalRevenueReportJob] Report submitted successfully.', [
+                'type'            => $this->type,
+                'total'           => $totalRevenue,
+                'verification_id' => $verify['id'] ?? null,
+                'report_id'       => $report['id'] ?? null,
             ]);
 
-            /** STEP 4: Chain confirmation job with a 10-second delay */
-            ConfirmRevenueReportJob::dispatch($reportResponse['id'] ?? null)
-                ->delay(now()->addSeconds(10));
-
-        } catch (\Throwable $e) {
-            /** Log error details for debugging */
-            Log::error("Revenue Report Job Failed", [
-                'type' => $this->type,
+            // Dispatch a confirmation job with a 10-second delay
+            ConfirmRevenueReportJob::dispatch($report['id'] ?? null)->delay(now()->addSeconds(10));
+        } catch (Throwable $e) {
+            /** Handle any unexpected errors and trigger retry. */
+            Log::error('[SendTotalRevenueReportJob] Failed.', [
+                'type'  => $this->type,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
-            // Rethrow to trigger queue retry mechanism
-            throw $e;
+            throw $e; // Allow Laravel to handle retries automatically
         }
     }
 
     /**
-     * Calculates total revenue based on the selected report type.
+     * Calculate total revenue based on the specified report type.
      *
-     * @return float The computed total revenue
-     * @throws \InvalidArgumentException If 'custom' type is missing dates
+     * @return float The calculated total revenue amount.
+     *
+     * @throws \InvalidArgumentException If date range is missing for custom reports.
      */
     private function calculateRevenue(): float
     {
         return match ($this->type) {
-            'weekly' => RevenueManager::calculateWeeklyRevenue(),
+            'weekly'  => RevenueManager::calculateWeeklyRevenue(),
             'monthly' => RevenueManager::calculateMonthlyRevenue(),
-            'custom' => $this->from && $this->to
+            'custom'  => $this->from && $this->to
                 ? RevenueManager::calculateRevenueByDateRange($this->from, $this->to)
-                : throw new \InvalidArgumentException("Custom report requires both 'from' and 'to' dates."),
-            default => RevenueManager::calculateDailyRevenue(),
+                : throw new \InvalidArgumentException("[SendTotalRevenueReportJob] Missing date range for custom report."),
+            default   => RevenueManager::calculateDailyRevenue(),
         };
     }
 }

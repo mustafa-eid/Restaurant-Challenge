@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\Order;
 use App\Services\Contracts\InventoryManagerInterface;
 use App\Services\Contracts\PaymentGatewayInterface;
+use App\Services\Payment\PaymentResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -15,6 +16,9 @@ use Throwable;
  * Class OrderService
  *
  * Business logic for handling order placement and related side effects.
+ *
+ * Note: OrderService is responsible for DB transaction boundaries for the
+ * complete order flow (payment + inventory + saving order).
  */
 class OrderService
 {
@@ -43,41 +47,47 @@ class OrderService
         DB::beginTransaction();
 
         try {
-            // Calculate total amount
+            // Calculate and set total amount
             $total = $this->calculateOrderTotal($order);
             $order->total_amount = $total;
 
-            // Only perform payment/inventory when there are items and total > 0
             $hasItems = $order->items && $order->items->isNotEmpty();
 
             if ($hasItems && $total > 0.0) {
                 // Process payment
-                $paymentSuccess = $this->paymentGateway->processPayment($total);
+                /** @var PaymentResult $paymentResult */
+                $paymentResult = $this->paymentGateway->processPayment($total);
 
-                if (! $paymentSuccess) {
-                    // Do not commit; roll back and return false so caller can handle.
+                if (! $paymentResult->success) {
                     DB::rollBack();
-                    Log::warning('Payment failed during order placement.', ['order_id' => $order->id ?? null, 'total' => $total]);
+                    Log::warning('[OrderService] Payment failed during order placement.', [
+                        'order_id' => $order->id ?? null,
+                        'total' => $total,
+                        'payment_message' => $paymentResult->message,
+                    ]);
+
                     return false;
                 }
 
                 // Prepare inventory payload
-                $inventoryItems = $order->items->map(function ($item) {
-                    return [
-                        'product_id' => $item->product_id,
-                        'quantity' => (int) $item->quantity,
-                    ];
-                })->toArray();
+                $inventoryItems = $order->items->map(fn($item): array => [
+                    'product_id' => $item->product_id,
+                    'quantity' => (int) $item->quantity,
+                ])->toArray();
 
                 $inventorySuccess = $this->inventoryManager->updateInventoryBatch($inventoryItems);
 
                 if (! $inventorySuccess) {
                     DB::rollBack();
-                    Log::warning('Inventory update failed after payment.', ['order_id' => $order->id ?? null]);
+                    Log::warning('[OrderService] Inventory update failed after payment.', [
+                        'order_id' => $order->id ?? null,
+                    ]);
                     return false;
                 }
             } else {
-                Log::info('Order has no items or zero total; skipping payment/inventory.', ['order_id' => $order->id ?? null]);
+                Log::info('[OrderService] Order has no items or zero total; skipping payment/inventory.', [
+                    'order_id' => $order->id ?? null,
+                ]);
             }
 
             // Persist order (create/update)
@@ -85,7 +95,7 @@ class OrderService
 
             DB::commit();
 
-            Log::info('Order processed successfully.', [
+            Log::info('[OrderService] Order processed successfully.', [
                 'order_id' => $order->id,
                 'total' => $order->total_amount,
             ]);
@@ -94,13 +104,13 @@ class OrderService
         } catch (Throwable $e) {
             DB::rollBack();
 
-            Log::error('Order processing exception.', [
+            Log::error('[OrderService] Exception while processing order.', [
                 'order_id' => $order->id ?? null,
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            // Re-throw to let higher layers (controllers/jobs) decide how to handle.
+            // Re-throw so higher layers can handle the exceptional path.
             throw $e;
         }
     }
@@ -119,7 +129,7 @@ class OrderService
 
         $total = (float) $order->items->sum(fn($item) => (float) $item->price * (int) $item->quantity);
 
-        // Optionally round to 2 decimals
+        // Keep currency rounding consistent
         return round($total, 2);
     }
 }

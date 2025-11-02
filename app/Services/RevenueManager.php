@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\OrderItem;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
@@ -12,9 +13,13 @@ use Carbon\Carbon;
  * Class RevenueManager
  *
  * Utility class for revenue calculation. Stateless static methods.
+ *
+ * Adds lightweight caching to avoid repeated heavy aggregation queries.
  */
 class RevenueManager
 {
+    private const CACHE_TTL_SECONDS = 3600; // 1 hour cache for computed ranges
+
     /**
      * Calculate total revenue for all order items.
      *
@@ -22,7 +27,11 @@ class RevenueManager
      */
     public static function calculateTotalRevenue(): float
     {
-        return (float) OrderItem::sum(DB::raw('quantity * price'));
+        $cacheKey = 'revenue:total';
+
+        return (float) Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () {
+            return (float) OrderItem::sum(DB::raw('quantity * price'));
+        });
     }
 
     /**
@@ -34,13 +43,17 @@ class RevenueManager
      */
     public static function calculateRevenueByDateRange(string $from, string $to): float
     {
-        // Ensure dates are properly formed; Carbon will throw if invalid
+        // Normalize and validate dates using Carbon
         $start = Carbon::parse($from)->startOfDay()->toDateTimeString();
         $end = Carbon::parse($to)->endOfDay()->toDateTimeString();
 
-        return (float) OrderItem::whereHas('order', function ($query) use ($start, $end) {
-            $query->whereBetween('created_at', [$start, $end]);
-        })->sum(DB::raw('quantity * price'));
+        $cacheKey = sprintf('revenue:%s:%s', $from, $to);
+
+        return (float) Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($start, $end) {
+            return (float) OrderItem::whereHas('order', function ($query) use ($start, $end) {
+                $query->whereBetween('created_at', [$start, $end]);
+            })->sum(DB::raw('quantity * price'));
+        });
     }
 
     /**

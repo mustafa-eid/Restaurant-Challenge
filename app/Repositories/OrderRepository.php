@@ -1,52 +1,44 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Repositories;
 
 use App\Models\Order;
-use App\Repositories\Interfaces\OrderRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
-class OrderRepository implements OrderRepositoryInterface
+/**
+ * Class OrderRepository
+ *
+ * Handles all data access logic for the Order model.
+ * Extends the BaseRepository for common CRUD operations,
+ * and adds custom methods specific to Order business logic.
+ *
+ * @package App\Repositories
+ */
+class OrderRepository extends BaseRepository
 {
     /**
-     * Get all orders with pagination and relations.
+     * OrderRepository constructor.
+     *
+     * @param Order $model Injected Order model instance
      */
-    public function all(int $perPage = 50): LengthAwarePaginator
+    public function __construct(Order $model)
     {
-        return Order::with(['items', 'branch'])
+        parent::__construct($model);
+    }
+
+    /**
+     * Retrieve all orders with related items and branches, paginated.
+     *
+     * @param int $perPage Number of orders per page
+     * @return LengthAwarePaginator
+     */
+    public function allWithRelations(int $perPage = 50): LengthAwarePaginator
+    {
+        return $this->model
+            ->with(['items', 'branch'])
             ->latest()
             ->paginate($perPage);
-    }
-
-    /**
-     * Find a specific order by its ID.
-     */
-    public function find(int $id): ?Order
-    {
-        return Order::with(['items', 'branch'])->find($id);
-    }
-
-    /**
-     * Create a new order.
-     */
-    public function create(array $data): Order
-    {
-        return Order::create($data);
-    }
-
-    /**
-     * Update an existing order.
-     */
-    public function update(Order $order, array $data): bool
-    {
-        return $order->update($data);
-    }
-
-    /**
-     * Delete an order.
-     */
-    public function delete(Order $order): bool
-    {
-        return $order->delete();
     }
 }

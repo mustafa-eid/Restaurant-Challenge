@@ -7,6 +7,22 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * Class Order
+ *
+ * Represents a customer order in the system.
+ * Each order belongs to one branch and contains multiple order items.
+ *
+ * @package App\Models
+ *
+ * @property int $id
+ * @property int $branch_id
+ * @property string $name
+ * @property float $total_amount
+ *
+ * @property-read \App\Models\Branch $branch
+ * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\OrderItem[] $items
+ */
 class Order extends Model
 {
     use HasFactory;
@@ -16,11 +32,7 @@ class Order extends Model
      *
      * @var array<string>
      */
-    protected $fillable = [
-        'branch_id',
-        'name',
-        'total_amount',
-    ];
+    protected $fillable = ['branch_id', 'name', 'total_amount'];
 
     /**
      * The attributes that should be cast.
@@ -33,6 +45,8 @@ class Order extends Model
 
     /**
      * Get the branch that owns the order.
+     *
+     * @return BelongsTo
      */
     public function branch(): BelongsTo
     {
@@ -41,6 +55,8 @@ class Order extends Model
 
     /**
      * Get the order items for the order.
+     *
+     * @return HasMany
      */
     public function items(): HasMany
     {

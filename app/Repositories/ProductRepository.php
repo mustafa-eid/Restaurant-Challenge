@@ -1,67 +1,40 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Repositories;
 
 use App\Models\Product;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use App\Repositories\Interfaces\ProductRepositoryInterface;
 
-class ProductRepository implements ProductRepositoryInterface
+/**
+ * Class ProductRepository
+ *
+ * Responsible for interacting with the Product model.
+ * Leverages BaseRepository for shared logic and
+ * provides additional customization for paginated retrieval.
+ *
+ * @package App\Repositories
+ */
+class ProductRepository extends BaseRepository
 {
     /**
-     * Get all products with pagination.
+     * ProductRepository constructor.
      *
-     * Eager loading can be added here if you want relationships (like orderItems).
+     * @param Product $model Injected Product model instance
+     */
+    public function __construct(Product $model)
+    {
+        parent::__construct($model);
+    }
+
+    /**
+     * Retrieve all products ordered by ID in descending order with pagination.
      *
-     * @return LengthAwarePaginator Paginated products
+     * @return LengthAwarePaginator
      */
     public function getAll(): LengthAwarePaginator
     {
-        return Product::orderByDesc('id')->paginate(10);
-    }
-
-    /**
-     * Store a new product in the database.
-     *
-     * @param array $data Product attributes
-     * @return Product Newly created product
-     */
-    public function store(array $data): Product
-    {
-        return Product::create($data);
-    }
-
-    /**
-     * Find a product by its ID.
-     *
-     * @param int $id Product ID
-     * @return Product|null Product model or null if not found
-     */
-    public function findById(int $id): ?Product
-    {
-        return Product::find($id);
-    }
-
-    /**
-     * Update an existing product.
-     *
-     * @param Product $product Product model
-     * @param array $data Updated attributes
-     * @return bool True if update succeeds, false otherwise
-     */
-    public function update(Product $product, array $data): bool
-    {
-        return $product->update($data);
-    }
-
-    /**
-     * Delete a product from the database.
-     *
-     * @param Product $product Product model
-     * @return bool True if deletion succeeds, false otherwise
-     */
-    public function delete(Product $product): bool
-    {
-        return $product->delete();
+        return $this->model->orderByDesc('id')->paginate(10);
     }
 }

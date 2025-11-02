@@ -18,8 +18,14 @@ interface InventoryManagerInterface
      *  - product_id (int|string)
      *  - quantity (int)
      *
+     * Behavior:
+     *  - The implementation SHOULD be called inside a DB transaction if row-level locks
+     *    are required (e.g. lockForUpdate).
+     *  - Returns true on full success (all items decremented), false if any item
+     *    could not be decremented due to insufficient stock or other recoverable reason.
+     *
      * @param array<int, array<string, mixed>> $items
-     * @return bool True on success, false on failure.
+     * @return bool True on success, false on failure (e.g. insufficient stock)
      */
     public function updateInventoryBatch(array $items): bool;
 }

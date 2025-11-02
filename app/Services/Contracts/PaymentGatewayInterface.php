@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Contracts;
 
+use App\Services\Payment\PaymentResult;
+
 /**
  * Interface PaymentGatewayInterface
  *
@@ -14,11 +16,15 @@ interface PaymentGatewayInterface
     /**
      * Process a payment of the specified amount.
      *
-     * Implementations should throw exceptions on fatal errors or
-     * return false for recoverable failures. Returning true indicates success.
+     * Implementations return a PaymentResult object that contains:
+     *  - success (bool)
+     *  - message (string|null)
+     *  - transactionId (string|null)
+     *
+     * Implementations should throw exceptions only for truly fatal/unexpected errors.
      *
      * @param float $amount
-     * @return bool
+     * @return PaymentResult
      */
-    public function processPayment(float $amount): bool;
+    public function processPayment(float $amount): PaymentResult;
 }

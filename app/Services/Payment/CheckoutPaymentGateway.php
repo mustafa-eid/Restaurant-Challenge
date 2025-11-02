@@ -18,33 +18,33 @@ class CheckoutPaymentGateway implements PaymentGatewayInterface
     /**
      * Process payment for the given amount.
      *
-     * In a real gateway you'd call external APIs, handle responses,
-     * throw specific exceptions on critical errors, and return boolean
-     * for success/failure.
-     *
      * @param float $amount
-     * @return bool
+     * @return PaymentResult
      */
-    public function processPayment(float $amount): bool
+    public function processPayment(float $amount): PaymentResult
     {
         try {
             if ($amount <= 0) {
-                Log::warning('Attempted to process non-positive payment amount.', ['amount' => $amount]);
-                return false;
+                $msg = 'Attempted to process non-positive payment amount.';
+                Log::warning('[CheckoutPaymentGateway] ' . $msg, ['amount' => $amount]);
+                return PaymentResult::failure($msg);
             }
 
-            // Simulated processing — replace with real gateway calls.
-            Log::info('CheckoutPaymentGateway: processing payment', ['amount' => $amount]);
+            // Replace this block with actual API client calls to an external gateway.
+            Log::info('[CheckoutPaymentGateway] Simulated processing payment', ['amount' => $amount]);
 
-            // Simulate success
-            return true;
+            // Simulate success and a fake transaction id
+            $transactionId = 'sim-' . uniqid('', true);
+
+            return PaymentResult::success($transactionId, 'Simulated payment success.');
         } catch (Throwable $e) {
-            Log::error('CheckoutPaymentGateway error', [
+            Log::error('[CheckoutPaymentGateway] Exception during payment processing', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'amount' => $amount,
             ]);
 
-            return false;
+            return PaymentResult::failure('Payment processing error: ' . $e->getMessage());
         }
     }
 }
